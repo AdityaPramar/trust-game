@@ -479,8 +479,47 @@
 
 
 </body>
+<script type="module">
+
+    import { initializeApp }
+        from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+
+    import {
+        getFirestore,
+        collection,
+        addDoc
+    }
+        from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+
+        apiKey: "AIzaSyAEJYP_oi7rvCpOXOkjEqv5BbEhwo5PoGU",
+        authDomain: "trustgame-bfd71.firebaseapp.com",
+        projectId: "trustgame-bfd71",
+        storageBucket: "trustgame-bfd71.firebasestorage.app",
+        messagingSenderId: "852392901778",
+        appId: "1:852392901778:web:5b8f3fb9d0ce6c046cba4b",
+        measurementId: "G-VHC1RS8CE8"
+
+    };
+
+    const app = initializeApp(firebaseConfig);
+
+    const db = getFirestore(app);
+
+    // expose globally
+
+    window.firebaseDB = db;
+    window.firebaseCollection = collection;
+    window.firebaseAddDoc = addDoc;
+
+    console.log("Firebase loaded");
+
+</script>
+
 
 <script>
+    const PARTICIPANT_ID = crypto.randomUUID();
     "use strict";
 
     /* =========================================================
@@ -1030,6 +1069,11 @@
         );
     }
 
+
+    /* =========================================================
+       実験デザイン・ブロック生成
+    ========================================================= */
+    const design = generateDesign();
     timeline.push({
         type: jsPsychHtmlButtonResponse,
         stimulus: `
@@ -1052,17 +1096,12 @@
             trial_kind: "practice_start"
         }
     });
+    const partnerIds = generatePartnerIds(design.length);
+
 
     timeline.push({
         timeline: practiceTimeline
     });
-
-    /* =========================================================
-       実験デザイン・ブロック生成
-    ========================================================= */
-    const design = generateDesign();
-
-    const partnerIds = generatePartnerIds(design.length);
 
     /* =========================================================
    Practice Block
@@ -1530,6 +1569,33 @@
         choices: ["終了"],
         data: { phase: "end", trial_kind: "end_screen" }
     });
+    async function uploadExperimentData() {
+
+        const allData =
+            jsPsych.data.get().values();
+
+        const docRef =
+            await window.firebaseAddDoc(
+
+                window.firebaseCollection(
+                    window.firebaseDB,
+                    "trust_game_data"
+                ),
+
+                {
+                    participant_id: PARTICIPANT_ID,
+                    timestamp:
+                        new Date().toISOString(),
+                    data: allData
+                }
+
+            );
+
+        console.log(
+            "Uploaded",
+            docRef.id
+        );
+    }
 
     function startExperiment() {
         document.getElementById("landing-page").style.display = "none";
@@ -1537,16 +1603,53 @@
 
         jsPsych = initJsPsych({
             display_element: "jspsych-target",
-            on_finish: () => {
+            on_finish: async () => {
+
+                try {
+
+                    await uploadExperimentData();
+
+                } catch (err) {
+
+                    console.error(err);
+
+                }
+
                 const csv = jsPsych.data.get().csv();
-                const blob = new Blob([csv], { type: "text/csv" });
+
+                const blob = new Blob([csv], {
+                    type: "text/csv"
+                });
+
                 const url = URL.createObjectURL(blob);
+
                 const a = document.createElement("a");
+
                 a.href = url;
-                a.download = `trust_game_gamified_ideriha_${Date.now()}.csv`;
+
+                a.download =
+                    `trust_game_${PARTICIPANT_ID}.csv`;
+
                 a.click();
             }
         });
+
+        const skipBtn = document.createElement("button");
+
+        skipBtn.id = "debug-skip-btn";
+        skipBtn.textContent = "DEBUG: Skip to End";
+
+        skipBtn.onclick = () => {
+
+            if (!confirm("Jump directly to experiment end?")) {
+                return;
+            }
+
+            jsPsych.endExperiment("DEBUG_SKIP");
+
+        };
+
+        document.body.appendChild(skipBtn);
 
         jsPsych.run(timeline);
     }
