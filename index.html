@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>繰り返し信頼ゲーム課題（改訂A案: gamified / ideriha）</title>
+  <title>繰り返し信頼ゲーム課題</title>
 
   <!-- jsPsych v7 -->
   <link href="https://unpkg.com/jspsych@7.3.4/css/jspsych.css" rel="stylesheet" />
@@ -479,8 +479,48 @@
 
 
 </body>
+<script type="module">
+
+  import { initializeApp }
+    from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+
+  import {
+    getFirestore,
+    collection,
+    addDoc
+  }
+    from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+
+    apiKey: "AIzaSyAEJYP_oi7rvCpOXOkjEqv5BbEhwo5PoGU",
+    authDomain: "trustgame-bfd71.firebaseapp.com",
+    projectId: "trustgame-bfd71",
+    storageBucket: "trustgame-bfd71.firebasestorage.app",
+    messagingSenderId: "852392901778",
+    appId: "1:852392901778:web:5b8f3fb9d0ce6c046cba4b",
+    measurementId: "G-VHC1RS8CE8"
+
+  };
+
+  const app = initializeApp(firebaseConfig);
+
+  const db = getFirestore(app);
+
+  // expose globally
+
+  window.firebaseDB = db;
+  window.firebaseCollection = collection;
+  window.firebaseAddDoc = addDoc;
+
+  console.log("Firebase loaded");
+
+</script>
+
 
 <script>
+  const PARTICIPANT_ID = crypto.randomUUID();
+  let ROOM_CODE = null;
   "use strict";
 
   /* =========================================================
@@ -715,8 +755,6 @@
   ========================================================= */
   const timeline = [];
 
-
-
   /* =========================================================
      ハンドルネーム・アイコン選択
   ========================================================= */
@@ -806,13 +844,327 @@
   `),
     ]
   });
+  const PRACTICE_ROUNDS = 3;
+  const PRACTICE_ICON = "💻";
+  const PRACTICE_NAME = "Computer";
+  const practiceTimeline = [];
+
+  for (let round = 1; round <= PRACTICE_ROUNDS; round++) {
+
+    const roundNum = round;
+
+    // 投資
+    practiceTimeline.push({
+      type: jsPsychHtmlSliderResponse,
+      stimulus: () => makeGameBoardHtml({
+        roundNum,
+        oppIcon: PRACTICE_ICON,
+        oppName: PRACTICE_NAME,
+        playerBarsHtml: makeBar(
+          "手持ち",
+          PARAMS.endowment,
+          PARAMS.endowment,
+          "gold",
+          ""
+        ),
+        oppBarsHtml: "",
+        content: `
+        <div class="center" style="margin-top:12px;">
+          <div id="invest-preview" class="amount-preview">
+            投資額：—円 → 相手に渡ると <strong>×${PARAMS.multiplier}</strong>
+          </div>
+          <div id="keep-preview" class="small">
+            手元に残す額：—円
+          </div>
+        </div>`
+      }),
+      min: 0,
+      max: AMOUNTS.length - 1,
+      step: 1,
+      slider_start: Math.floor(AMOUNTS.length / 2),
+      labels: [
+        String(PARAMS.invest_min),
+        "",
+        String(Math.round((PARAMS.invest_min + PARAMS.invest_max) / 2)),
+        "",
+        String(PARAMS.invest_max)
+      ],
+      button_label: "確定",
+      require_movement: true,
+
+      data: {
+        phase: "practice",
+        trial_kind: "practice_invest",
+        round: roundNum
+      },
+
+      on_load: () => {
+
+        const slider = document.querySelector("input[type='range']");
+        const investP = document.getElementById("invest-preview");
+        const keepP = document.getElementById("keep-preview");
+        const barsEl = document.getElementById("my-bars");
+        const oppBarsEl = document.getElementById("opp-bars");
+
+        slider.classList.add("slider-hidden-thumb");
+
+        const reveal = () => {
+
+          slider.classList.remove("slider-hidden-thumb");
+
+          const idx = parseInt(slider.value);
+          const g = AMOUNTS[idx];
+
+          const keep = PARAMS.endowment - g;
+          const oppReceive = g * PARAMS.multiplier;
+
+          investP.innerHTML =
+            `投資額：<strong>${g}円</strong> → 相手に <strong>${oppReceive}円</strong>`;
+
+          keepP.textContent =
+            `手元に残す額：${keep}円`;
+
+          barsEl.innerHTML =
+            makeBar("手持ち", keep, PARAMS.endowment, "gold", "");
+
+          oppBarsEl.innerHTML =
+            makeBar("受取", oppReceive, PARAMS.endowment, "green", "");
+        };
+
+        slider.addEventListener("input", reveal);
+        slider.addEventListener("pointerdown", reveal);
+      },
+
+      on_finish: (data) => {
+
+        const idx = parseInt(data.response);
+
+        const g = AMOUNTS[idx];
+
+        data.investment = g;
+
+        data.return_amount =
+          randInt(50, 100);   // ← practice return
+      }
+    });
+
+    // Thinking screen
+    practiceTimeline.push({
+      type: jsPsychHtmlKeyboardResponse,
+      stimulus: () => {
+
+        const inv =
+          jsPsych.data.get()
+            .filter({
+              phase: "practice",
+              trial_kind: "practice_invest",
+              round: roundNum
+            })
+            .last(1)
+            .values()[0];
+
+        const g = inv.investment;
+
+        return makeGameBoardHtml({
+          roundNum,
+          oppIcon: PRACTICE_ICON,
+          oppName: PRACTICE_NAME,
+          playerBarsHtml: makeBar(
+            "手持ち",
+            PARAMS.endowment - g,
+            PARAMS.endowment,
+            "gold",
+            ""
+          ),
+          oppBarsHtml:
+            makeBar(
+              "受取",
+              g * PARAMS.multiplier,
+              PARAMS.endowment,
+              "green",
+              "grow"
+            ) +
+            `<div style="text-align:center;margin-top:8px;">
+            <span class="thinking-bubble">思考中...</span>
+          </div>`,
+          content: ""
+        });
+      },
+      choices: "NO_KEYS",
+      trial_duration: randInt(0, 0),
+      data: {
+        phase: "practice",
+        trial_kind: "practice_wait",
+        round: roundNum
+      }
+    });
+
+    // Return display
+    practiceTimeline.push({
+      type: jsPsychHtmlButtonResponse,
+
+      stimulus: () => {
+
+        const inv =
+          jsPsych.data.get()
+            .filter({
+              phase: "practice",
+              trial_kind: "practice_invest",
+              round: roundNum
+            })
+            .last(1)
+            .values()[0];
+
+        const g = inv.investment;
+        const y = inv.return_amount;
+
+        return makeGameBoardHtml({
+          roundNum,
+          oppIcon: PRACTICE_ICON,
+          oppName: PRACTICE_NAME,
+
+          oppBarsHtml: "",
+
+          playerBarsHtml:
+            makeBar(
+              "手持ち",
+              PARAMS.endowment - g,
+              PARAMS.endowment,
+              "gold",
+              ""
+            ) +
+            makeBar(
+              "リターン",
+              y,
+              PARAMS.endowment,
+              "green",
+              "grow"
+            ),
+
+          content: `
+          <div class="center mid" style="margin-top:12px;">
+            <p>あなたの投資：<strong>${g}円</strong></p>
+            <p>コンピュータから返ってきた額：
+              <strong>${y}円</strong>
+            </p>
+          </div>`
+        });
+      },
+
+      choices: ["次へ"],
+
+      data: {
+        phase: "practice",
+        trial_kind: "practice_return",
+        round: roundNum
+      }
+    });
+
+    practiceTimeline.push(
+      makeFixationISI({
+        phase: "practice",
+        round: roundNum
+      })
+    );
+  }
+
 
   /* =========================================================
      実験デザイン・ブロック生成
   ========================================================= */
   const design = generateDesign();
+  timeline.push({
+    type: jsPsychHtmlButtonResponse,
+    stimulus: `
+    <div class="center">
+      <h2>練習ラウンド</h2>
+      <p class="mid">
+        これからコンピュータを相手に練習を行います。
+      </p>
+      <p>
+        このゲームは <strong>3ラウンド</strong> 続きます。
+      </p>
+      <p class="small">
+        練習中のデータは分析には使用されません。
+      </p>
+    </div>
+  `,
+    choices: ["開始"],
+    data: {
+      phase: "practice",
+      trial_kind: "practice_start"
+    }
+  });
   const partnerIds = generatePartnerIds(design.length);
 
+
+  timeline.push({
+    timeline: practiceTimeline
+  });
+
+  /* =========================================================
+ Practice Block
+========================================================= */
+
+  // Room Code Gate
+  let roomCodeFirstAttempt = true;
+  let lastEnteredCode = "";  // capture value before DOM teardown
+
+  timeline.push({
+    timeline: [{
+      type: jsPsychHtmlButtonResponse,
+      stimulus: () => `
+        <div class="center">
+          <h2>部屋コードを入力してください</h2>
+          <p class="small">実験担当者から受け取ったコードを入力してください。</p>
+          <div style="margin-top:16px;">
+            <input
+              id="room-code-input"
+              type="text"
+              placeholder="例：RM10402"
+              style="
+                font-size:22px;
+                padding:10px 18px;
+                border:2px solid #aaa;
+                border-radius:8px;
+                text-align:center;
+                width:220px;
+                letter-spacing:3px;
+                text-transform:uppercase;
+              "
+            />
+          </div>
+          <div style="color:#e74c3c;font-size:15px;margin-top:10px;min-height:22px;">
+            ${roomCodeFirstAttempt ? "" : "❌ コードが正しくありません。もう一度入力してください。"}
+          </div>
+        </div>`,
+      choices: ["確認"],
+      data: { phase: "room_code", trial_kind: "room_code_input" },
+      on_load: () => {
+        const input = document.getElementById("room-code-input");
+        // Save value on every keystroke so on_finish can read it safely
+        input.addEventListener("input", () => {
+          lastEnteredCode = input.value;
+        });
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") document.querySelector(".jspsych-btn").click();
+        });
+      },
+      on_finish: (data) => {
+        const VALID_CODES = ["RM10402", "RM20402", "RM30402"];
+        const entered = lastEnteredCode.trim().toUpperCase();
+        if (VALID_CODES.includes(entered)) {
+          ROOM_CODE = entered;
+          data.room_code = entered;
+          data.room_code_valid = true;
+        } else {
+          roomCodeFirstAttempt = false;
+          data.room_code_valid = false;
+        }
+      }
+    }],
+    loop_function: () => ROOM_CODE === null
+  });
   // 相手アイコンプール（シャッフルして割り当て）
   const shuffledOppIcons = shuffle(OPPONENT_ICONS);
   const shuffledOppNames = shuffle(OPPONENT_NAMES);
@@ -1273,6 +1625,34 @@
     choices: ["終了"],
     data: { phase: "end", trial_kind: "end_screen" }
   });
+  async function uploadExperimentData() {
+
+    const allData =
+      jsPsych.data.get().values();
+
+    const docRef =
+      await window.firebaseAddDoc(
+
+        window.firebaseCollection(
+          window.firebaseDB,
+          "trust_game_data"
+        ),
+
+        {
+          participant_id: PARTICIPANT_ID,
+          room_code: ROOM_CODE,
+          timestamp:
+            new Date().toISOString(),
+          data: allData
+        }
+
+      );
+
+    console.log(
+      "Uploaded",
+      docRef.id
+    );
+  }
 
   function startExperiment() {
     document.getElementById("landing-page").style.display = "none";
@@ -1280,16 +1660,53 @@
 
     jsPsych = initJsPsych({
       display_element: "jspsych-target",
-      on_finish: () => {
+      on_finish: async () => {
+
+        try {
+
+          await uploadExperimentData();
+
+        } catch (err) {
+
+          console.error(err);
+
+        }
+
         const csv = jsPsych.data.get().csv();
-        const blob = new Blob([csv], { type: "text/csv" });
+
+        const blob = new Blob([csv], {
+          type: "text/csv"
+        });
+
         const url = URL.createObjectURL(blob);
+
         const a = document.createElement("a");
+
         a.href = url;
-        a.download = `trust_game_gamified_ideriha_${Date.now()}.csv`;
+
+        a.download =
+          `trust_game_${PARTICIPANT_ID}.csv`;
+
         a.click();
       }
     });
+
+    const skipBtn = document.createElement("button");
+
+    skipBtn.id = "debug-skip-btn";
+    skipBtn.textContent = "DEBUG: Skip to End";
+
+    skipBtn.onclick = () => {
+
+      if (!confirm("Jump directly to experiment end?")) {
+        return;
+      }
+
+      jsPsych.endExperiment("DEBUG_SKIP");
+
+    };
+
+    document.body.appendChild(skipBtn);
 
     jsPsych.run(timeline);
   }
